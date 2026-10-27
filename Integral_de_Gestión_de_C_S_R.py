@@ -84,3 +84,47 @@ def leer_registro(ruta=RUTA_LOG):
         if archivo is not None:
             archivo.close()                 # El archivo se cierra aunque ocurra un error
 
+# -----------------------------------------------------------------------------
+# Excepciones personalizadas: todas heredan de ErrorSistemaFJ
+# -----------------------------------------------------------------------------
+class ErrorSistemaFJ(Exception):
+    """Excepción base de todos los errores controlados del sistema."""
+
+    titulo = "Error del sistema"            # Título del cuadro de diálogo en la interfaz
+
+
+class DatoInvalidoError(ErrorSistemaFJ):
+    """Un dato tiene un formato o un valor que no está permitido."""
+
+    titulo = "Dato inválido"                # Ejemplo: correo sin @ o tarifa negativa
+
+
+class ParametroFaltanteError(ErrorSistemaFJ):
+    """Falta un dato obligatorio."""
+
+    titulo = "Parámetro faltante"           # Ejemplo: nombre vacío
+
+
+class OperacionNoPermitidaError(ErrorSistemaFJ):
+    """La operación no se puede realizar en el estado actual."""
+
+    titulo = "Operación no permitida"       # Ejemplo: cancelar una reserva ya procesada
+
+
+class ReservaInvalidaError(ErrorSistemaFJ):
+    """El intento de reserva no cumple las reglas del sistema."""
+
+    titulo = "Reserva inválida"             # Ejemplo: duración mayor a la permitida
+
+
+class ServicioNoDisponibleError(ErrorSistemaFJ):
+    """El servicio no existe en el catálogo o está marcado como no disponible."""
+
+    titulo = "Servicio no disponible"       # Ejemplo: reservar un equipo deshabilitado
+
+
+class CalculoInconsistenteError(ErrorSistemaFJ):
+    """Un cálculo de costos recibe o produce valores sin sentido."""
+
+    titulo = "Cálculo inconsistente"        # Ejemplo: descuento del 150 %
+
