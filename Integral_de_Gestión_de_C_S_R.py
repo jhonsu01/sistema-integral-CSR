@@ -128,3 +128,70 @@ class CalculoInconsistenteError(ErrorSistemaFJ):
 
     titulo = "Cálculo inconsistente"        # Ejemplo: descuento del 150 %
 
+
+
+# -----------------------------------------------------------------------------
+# Clase abstracta que representa cualquier entidad general del sistema
+# -----------------------------------------------------------------------------
+class Entidad(ABC):
+    """Entidad general: tiene un código único, una fecha de creación y sabe describirse."""
+
+    _contadores = {}                        # Consecutivo por tipo de entidad: CLI, SER, RES
+
+    def __init__(self, prefijo):
+        # Las clases hijas llaman a este constructor al final, cuando sus datos ya son
+        # válidos; así solo los objetos correctos consumen un código consecutivo.
+        consecutivo = Entidad._contadores.get(prefijo, 0) + 1     # Siguiente número del tipo
+        Entidad._contadores[prefijo] = consecutivo
+        self._id = f"{prefijo}-{consecutivo:03d}"           # Ejemplo: CLI-001
+        self._fecha_creacion = datetime.now()               # Momento en que se creó
+
+    @property
+    def id(self):
+        """Código único de la entidad (solo lectura)."""
+        return self._id
+
+    @property
+    def fecha_creacion(self):
+        """Fecha y hora en que se creó la entidad (solo lectura)."""
+        return self._fecha_creacion
+
+    @abstractmethod
+    def describir(self):
+        """Cada entidad concreta debe describirse con sus propios datos."""
+
+    def __str__(self):
+        # Texto común a todas las entidades: código y descripción propia (polimorfismo)
+        return f"{self._id} - {self.describir()}"
+
+
+# =============================================================================
+# SECCIÓN 2: FUNCIONES DE VALIDACIÓN Y CLASE CLIENTE
+# Aporte de: Johan Ricardo Reina Florindo (rama Johan)
+# =============================================================================
+
+# >>> APORTE PENDIENTE DE JOHAN: reemplace esta línea por el contenido de seccion_2_cliente.py
+
+
+# =============================================================================
+# SECCIÓN 3: CLASE ABSTRACTA SERVICIO Y SERVICIOS ESPECIALIZADOS
+# Aporte de: Mauro Daniel Rodríguez Pinzón (rama Mauro)
+# =============================================================================
+
+# >>> APORTE PENDIENTE DE MAURO: reemplace esta línea por el contenido de seccion_3_servicios.py
+
+
+# =============================================================================
+# SECCIÓN 4: CLASE RESERVA, GESTOR DEL SISTEMA Y SIMULACIÓN DE OPERACIONES
+# Aporte de: Nicolas Farid Salinas Carrillo (rama Nicolas)
+# =============================================================================
+
+# >>> APORTE PENDIENTE DE NICOLAS: reemplace esta línea por el contenido de seccion_4_reservas.py
+
+
+# =============================================================================
+# SECCIÓN 5: INTERFAZ GRÁFICA (tkinter, ttk y messagebox) Y PUNTO DE ENTRADA
+# Aporte de: Kevin Geovani Santos Ortega (rama Kevin)
+# =============================================================================
+
+# >>> APORTE PENDIENTE DE KEVIN: reemplace esta línea por el contenido de seccion_5_interfaz.py
