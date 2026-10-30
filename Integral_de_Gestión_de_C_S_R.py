@@ -170,7 +170,125 @@ class Entidad(ABC):
 # Aporte de: Johan Ricardo Reina Florindo (rama Johan)
 # =============================================================================
 
-# >>> APORTE PENDIENTE DE JOHAN: reemplace esta línea por el contenido de seccion_2_cliente.py
+SIN_TILDES = str.maketrans("áéíóúüÁÉÍÓÚÜ", "aeiouuAEIOUU")    # Tabla para borrar tildes
+
+
+def normalizar(texto):
+    """Pasa un texto a minúsculas, sin tildes ni espacios repetidos (para comparar)."""
+    return " ".join(str(texto).split()).lower().translate(SIN_TILDES)
+
+
+def texto_obligatorio(valor, campo):
+    """Verifica que un dato obligatorio no esté vacío y lo devuelve sin espacios sobrantes."""
+    if valor is None or str(valor).strip() == "":                 # Vacío o solo espacios
+        raise ParametroFaltanteError(f"El campo '{campo}' es obligatorio.")
+    return " ".join(str(valor).split())     # Quita espacios al inicio, al final y repetidos
+
+
+def convertir_numero(valor, campo, tipo=float, minimo=None, maximo=None):
+    """Convierte un dato a número (float o int) y verifica sus límites."""
+    texto = texto_obligatorio(valor, campo)                     # Primero: que no esté vacío
+    try:
+        numero = tipo(texto)                                    # int("12") o float("2.5")
+    except ValueError as error:
+        clase = "un número entero" if tipo is int else "un número (use punto decimal)"
+        # Encadenamiento: el ValueError original queda guardado como causa del error propio
+        raise DatoInvalidoError(
+            f"El campo '{campo}' debe ser {clase}; se recibió '{texto}'.") from error
+    if numero != numero or numero in (float("inf"), float("-inf")):    # NaN o infinito
+        raise DatoInvalidoError(f"El campo '{campo}' debe ser un número finito.")
+    if minimo is not None and numero < minimo:                  # Límite inferior
+        raise DatoInvalidoError(f"El campo '{campo}' debe ser mayor o igual a {minimo:g}.")
+    if maximo is not None and numero > maximo:                  # Límite superior
+        raise DatoInvalidoError(f"El campo '{campo}' debe ser menor o igual a {maximo:g}.")
+    return numero
+
+
+def formato_moneda(valor):
+    """Muestra un valor en pesos colombianos: 1234567.5 -> $ 1.234.567,50."""
+    texto = f"{valor:,.2f}"                 # 1,234,567.50 (formato inglés)
+    # " " es un espacio que no se parte: el signo $ nunca queda separado del valor
+    return "$ " + texto.replace(",", "#").replace(".", ",").replace("#", ".")
+
+
+class Cliente(Entidad):
+    """Cliente de Software FJ con sus datos personales privados y validados."""
+
+    PATRON_CORREO = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")     # usuario@dominio.ext
+
+    def __init__(self, documento, nombre, correo, telefono):
+        self.__documento = self.validar_documento(documento)   # Atributo privado
+        self.nombre = nombre            # Cada asignación pasa por su setter, que valida
+        self.correo = correo
+        self.telefono = telefono
+        super().__init__("CLI")         # El código se asigna solo si todo fue válido
+
+    @staticmethod
+    def validar_documento(documento):
+        """El documento es obligatorio, solo con dígitos y de 6 a 10 cifras."""
+        texto = texto_obligatorio(documento, "documento")
+        if not (texto.isascii() and texto.isdigit()):          # Solo dígitos del 0 al 9
+            raise DatoInvalidoError(
+                "El documento solo puede contener números, sin puntos ni espacios.")
+        if not 6 <= len(texto) <= 10:                          # Longitud permitida
+            raise DatoInvalidoError("El documento debe tener entre 6 y 10 dígitos.")
+        return texto
+
+    @property
+    def documento(self):
+        """Documento de identidad: es de solo lectura porque no tiene setter."""
+        return self.__documento
+
+    @property
+    def nombre(self):
+        """Nombre completo del cliente."""
+        return self.__nombre
+
+    @nombre.setter
+    def nombre(self, valor):
+        texto = texto_obligatorio(valor, "nombre")
+        if len(texto) < 3:                                      # Nombre demasiado corto
+            raise DatoInvalidoError("El nombre debe tener al menos 3 letras.")
+        if not all(letra.isalpha() or letra == " " for letra in texto):    # Solo letras
+            raise DatoInvalidoError("El nombre solo puede contener letras y espacios.")
+        self.__nombre = texto                                   # Se guarda solo si es válido
+
+    @property
+    def correo(self):
+        """Correo electrónico del cliente (siempre en minúsculas)."""
+        return self.__correo
+
+    @correo.setter
+    def correo(self, valor):
+        texto = texto_obligatorio(valor, "correo").lower()
+        if not Cliente.PATRON_CORREO.match(texto):              # Compara con el patrón
+            raise DatoInvalidoError(
+                f"El correo '{texto}' no tiene un formato válido (ejemplo: usuario@dominio.com).")
+        self.__correo = texto
+
+    @property
+    def telefono(self):
+        """Teléfono de contacto del cliente."""
+        return self.__telefono
+
+    @telefono.setter
+    def telefono(self, valor):
+        texto = texto_obligatorio(valor, "teléfono")
+        # Debe tener solo dígitos y entre 7 (fijo) y 10 (celular) cifras
+        if not (texto.isascii() and texto.isdigit()) or not 7 <= len(texto) <= 10:
+            raise DatoInvalidoError(
+                "El teléfono debe tener entre 7 y 10 dígitos, sin espacios ni símbolos.")
+        self.__telefono = texto
+
+    def documento_protegido(self):
+        """Muestra solo los 4 últimos dígitos del documento para proteger el dato personal."""
+        return "*" * (len(self.__documento) - 4) + self.__documento[-4:]
+
+    def describir(self):
+        # Sobrescribe el método abstracto de Entidad con los datos propios del cliente
+        return (f"{self.__nombre} | doc. {self.documento_protegido()} | "
+                f"{self.__correo} | tel. {self.__telefono}")
+
 
 
 # =============================================================================
