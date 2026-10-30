@@ -170,7 +170,7 @@ class Entidad(ABC):
 # Aporte de: Johan Ricardo Reina Florindo (rama Johan)
 # =============================================================================
 
-SIN_TILDES = str.maketrans("áéíóúüÁÉÍÓÚÜ", "aeiouuAEIOUU")    # Tabla para quitar tildes
+SIN_TILDES = str.maketrans("áéíóúüÁÉÍÓÚÜ", "aeiouuAEIOUU")    # Tabla para borrar tildes
 
 
 def normalizar(texto):
