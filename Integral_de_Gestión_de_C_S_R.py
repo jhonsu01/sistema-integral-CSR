@@ -566,7 +566,332 @@ TIPOS_SERVICIO = {clase.TIPO: clase
 # Aporte de: Nicolas Farid Salinas Carrillo (rama Nicolas)
 # =============================================================================
 
-# >>> APORTE PENDIENTE DE NICOLAS: reemplace esta línea por el contenido de seccion_4_reservas.py
+class Reserva(Entidad):
+    """Reserva que integra un cliente, un servicio, una duración y un estado."""
+
+    # Estados posibles de una reserva
+    PENDIENTE = "Pendiente"
+    CONFIRMADA = "Confirmada"
+    CANCELADA = "Cancelada"
+    PROCESADA = "Procesada"
+
+    def __init__(self, cliente, servicio, duracion, impuesto=0, descuento=0):
+        if not isinstance(cliente, Cliente):                    # El cliente debe ser real
+            raise ReservaInvalidaError("La reserva debe tener un cliente registrado.")
+        if not isinstance(servicio, Servicio):                  # Y el servicio también
+            raise ServicioNoDisponibleError("La reserva debe tener un servicio del catálogo.")
+        if not servicio.disponible:                             # No se reserva lo deshabilitado
+            raise ServicioNoDisponibleError(
+                f"El servicio '{servicio.nombre}' no está disponible en este momento.")
+        try:
+            self.__duracion = servicio.validar_parametros(duracion)     # Regla del servicio
+            self.__costo = servicio.calcular_costo(duracion, impuesto, descuento)
+        except (DatoInvalidoError, ParametroFaltanteError) as error:
+            # Encadenamiento: el error de validación queda como causa de la reserva inválida
+            raise ReservaInvalidaError(
+                f"No se pudo crear la reserva de '{servicio.nombre}': {error}") from error
+        self.__cliente = cliente                # Atributos privados de la reserva
+        self.__servicio = servicio
+        self.__estado = Reserva.PENDIENTE       # Toda reserva nueva inicia pendiente
+        super().__init__("RES")                 # Código consecutivo: RES-001, RES-002...
+
+    # ----- Propiedades de solo lectura -----
+    @property
+    def cliente(self):
+        return self.__cliente
+
+    @property
+    def servicio(self):
+        return self.__servicio
+
+    @property
+    def duracion(self):
+        return self.__duracion
+
+    @property
+    def costo(self):
+        return self.__costo
+
+    @property
+    def estado(self):
+        return self.__estado
+
+    def confirmar(self):
+        """Pasa la reserva de Pendiente a Confirmada."""
+        if self.__estado != Reserva.PENDIENTE:                  # Solo desde Pendiente
+            raise OperacionNoPermitidaError(
+                f"Solo se confirman reservas pendientes; la reserva {self.id} "
+                f"está {self.__estado.lower()}.")
+        if not self.__servicio.disponible:                      # El servicio pudo deshabilitarse
+            raise ServicioNoDisponibleError(
+                f"No se puede confirmar: el servicio '{self.__servicio.nombre}' "
+                f"dejó de estar disponible.")
+        self.__estado = Reserva.CONFIRMADA
+
+    def cancelar(self):
+        """Cancela la reserva mientras no esté cancelada ni procesada."""
+        if self.__estado in (Reserva.CANCELADA, Reserva.PROCESADA):    # Estados finales
+            raise OperacionNoPermitidaError(
+                f"La reserva {self.id} ya está {self.__estado.lower()} y no se puede cancelar.")
+        self.__estado = Reserva.CANCELADA
+
+    def procesar(self):
+        """Factura la reserva confirmada y la marca como procesada."""
+        if self.__estado != Reserva.CONFIRMADA:                 # Solo desde Confirmada
+            raise OperacionNoPermitidaError(
+                f"Solo se procesan reservas confirmadas; la reserva {self.id} "
+                f"está {self.__estado.lower()}.")
+        if self.__costo <= 0:                                   # Revisión del valor a cobrar
+            raise CalculoInconsistenteError(f"La reserva {self.id} tiene un costo no válido.")
+        self.__estado = Reserva.PROCESADA
+        return self.__costo                                     # Valor facturado
+
+    def describir(self):
+        # Descripción propia de la reserva (sobrescribe describir)
+        return (f"{self.__cliente.nombre} | {self.__servicio.nombre} | "
+                f"{self.__duracion:g} {self.__servicio.UNIDAD} | "
+                f"{formato_moneda(self.__costo)} | {self.__estado}")
+
+
+class GestorSistema:
+    """Coordina clientes, servicios y reservas guardados en listas internas (sin base de datos)."""
+
+    def __init__(self):
+        self._clientes = []                 # Lista interna de clientes registrados
+        self._servicios = []                # Lista interna del catálogo de servicios
+        self._reservas = []                 # Lista interna de reservas
+        self._operaciones = 0               # Contador de operaciones ejecutadas
+
+    # ----- Consultas: devuelven copias para proteger las listas internas -----
+    @property
+    def clientes(self):
+        return list(self._clientes)
+
+    @property
+    def servicios(self):
+        return list(self._servicios)
+
+    @property
+    def reservas(self):
+        return list(self._reservas)
+
+    def buscar_cliente(self, dato):
+        """Busca un cliente por documento o por código (CLI-001); si no existe devuelve None."""
+        dato = "" if dato is None else str(dato).strip()
+        for cliente in self._clientes:                          # Recorre la lista interna
+            if dato in (cliente.documento, cliente.id):
+                return cliente
+        return None
+
+    def buscar_servicio(self, codigo):
+        """Busca un servicio por su código (SER-001); si no existe devuelve None."""
+        codigo = "" if codigo is None else str(codigo).strip().upper()
+        return next((servicio for servicio in self._servicios if servicio.id == codigo), None)
+
+    def buscar_reserva(self, codigo):
+        """Busca una reserva por su código (RES-001); si no existe devuelve None."""
+        codigo = "" if codigo is None else str(codigo).strip().upper()
+        return next((reserva for reserva in self._reservas if reserva.id == codigo), None)
+
+    # ----- Operaciones del sistema -----
+    def registrar_cliente(self, documento, nombre, correo, telefono):
+        """Valida y registra un cliente nuevo (try/except/else)."""
+        try:
+            documento = Cliente.validar_documento(documento)       # Primero el formato
+            if self.buscar_cliente(documento) is not None:         # Luego que no se repita
+                raise OperacionNoPermitidaError(
+                    "Ya existe un cliente registrado con ese documento.")
+            cliente = Cliente(documento, nombre, correo, telefono)
+        except ErrorSistemaFJ as error:
+            registrar_error(error, "Registrar cliente")            # Todo error queda en el log
+            raise                           # La interfaz decide cómo mostrar el error
+        else:
+            self._clientes.append(cliente)  # else: solo se guarda si no hubo errores
+            registro.info(f"Cliente registrado: {cliente}")
+            return cliente
+
+    def crear_servicio(self, tipo, nombre, tarifa, dato1=None, dato2=None):
+        """Crea un servicio del tipo indicado; cada clase sabe construirse (polimorfismo)."""
+        try:
+            clase = TIPOS_SERVICIO.get(tipo)                       # Busca la clase en el catálogo
+            if clase is None:
+                raise DatoInvalidoError(f"Tipo de servicio desconocido: '{tipo}'. "
+                                        f"Opciones: {', '.join(TIPOS_SERVICIO)}.")
+            servicio = clase.crear(nombre, tarifa, dato1, dato2)   # Cada clase se construye sola
+        except ErrorSistemaFJ as error:
+            registrar_error(error, "Crear servicio")
+            raise
+        else:
+            self._servicios.append(servicio)                       # Se agrega al catálogo
+            registro.info(f"Servicio creado ({servicio.TIPO}): {servicio}")
+            return servicio
+
+    def cambiar_disponibilidad(self, codigo):
+        """Marca un servicio como disponible o no disponible."""
+        try:
+            servicio = self.buscar_servicio(codigo)
+            if servicio is None:
+                raise ServicioNoDisponibleError(
+                    f"No existe el servicio '{codigo}' en el catálogo.")
+            servicio.disponible = not servicio.disponible          # Invierte el estado
+        except ErrorSistemaFJ as error:
+            registrar_error(error, "Cambiar disponibilidad")
+            raise
+        else:
+            registro.info(f"Disponibilidad actualizada: {servicio}")
+            return servicio
+
+    def crear_reserva(self, cliente, codigo_servicio, duracion, impuesto=0, descuento=0):
+        """Crea una reserva en estado Pendiente; cliente = documento o código del cliente."""
+        try:
+            encontrado = self.buscar_cliente(cliente)              # El cliente debe existir
+            if encontrado is None:
+                raise ReservaInvalidaError(
+                    f"No hay un cliente registrado con el dato '{cliente}'.")
+            servicio = self.buscar_servicio(codigo_servicio)       # El servicio también
+            if servicio is None:
+                raise ServicioNoDisponibleError(
+                    f"No existe el servicio '{codigo_servicio}' en el catálogo.")
+            reserva = Reserva(encontrado, servicio, duracion, impuesto, descuento)
+        except ErrorSistemaFJ as error:
+            registrar_error(error, "Crear reserva")
+            raise
+        else:
+            self._reservas.append(reserva)                         # Se guarda la reserva válida
+            registro.info(f"Reserva creada: {reserva}")
+            return reserva
+
+    # Las tres acciones sobre una reserva comparten el mismo manejo de errores
+    def confirmar_reserva(self, codigo):
+        return self._cambiar_estado(codigo, Reserva.confirmar, "confirmar")
+
+    def cancelar_reserva(self, codigo):
+        return self._cambiar_estado(codigo, Reserva.cancelar, "cancelar")
+
+    def procesar_reserva(self, codigo):
+        return self._cambiar_estado(codigo, Reserva.procesar, "procesar")
+
+    def _cambiar_estado(self, codigo, accion, verbo):
+        """Confirma, cancela o procesa una reserva usando try/except/else/finally."""
+        try:
+            reserva = self.buscar_reserva(codigo)
+            if reserva is None:
+                raise OperacionNoPermitidaError(f"No existe la reserva '{codigo}'.")
+            accion(reserva)                 # Reserva.confirmar, cancelar o procesar
+        except ErrorSistemaFJ as error:
+            registrar_error(error, f"No se pudo {verbo} la reserva {codigo}")
+            raise
+        else:
+            registro.info(f"Reserva actualizada: {reserva}")       # Solo si no hubo error
+            return reserva
+        finally:
+            # finally: se ejecuta siempre y deja constancia del intento, exitoso o no
+            registro.info(f"Fin del intento de {verbo} la reserva {codigo}.")
+
+    def ejecutar_operacion(self, descripcion, funcion, *argumentos):
+        """Ejecuta cualquier operación sin detener el sistema y devuelve su resultado."""
+        self._operaciones += 1
+        numero = self._operaciones
+        # Resumen de la operación: número, descripción, resultado y detalle
+        resultado = {"numero": numero, "operacion": descripcion,
+                     "estado": "", "detalle": "", "objeto": None}
+        try:
+            try:
+                objeto = funcion(*argumentos)   # Ejecuta la operación pedida
+            finally:
+                # try/finally: se registra el fin de la operación, falle o no
+                registro.info(f"Operación {numero} finalizada: {descripcion}")
+        except ErrorSistemaFJ as error:
+            # Error previsto: el método que lo lanzó ya lo escribió en el log
+            resultado.update(estado="Error controlado", detalle=f"{error.titulo}: {error}")
+        except Exception as error:          # Último recurso: errores no previstos
+            registro.critical(f"Operación {numero} ({descripcion}) -> error inesperado "
+                              f"{type(error).__name__}: {error}", exc_info=True)
+            resultado.update(estado="Error inesperado",
+                             detalle=f"{type(error).__name__}: {error}")
+        else:
+            detalle = str(objeto) if objeto is not None else "Operación realizada."
+            resultado.update(estado="Éxito", detalle=detalle, objeto=objeto)
+        return resultado
+
+
+def resumir_simulacion(resultados):
+    """Cuenta los resultados de la simulación y los resume en una frase."""
+    exitos = sum(1 for resultado in resultados if resultado["estado"] == "Éxito")
+    inesperados = sum(1 for resultado in resultados if resultado["estado"] == "Error inesperado")
+    controlados = len(resultados) - exitos - inesperados       # El resto: errores previstos
+    return (f"Se ejecutaron {len(resultados)} operaciones: {exitos} exitosas, "
+            f"{controlados} con error controlado y {inesperados} con error inesperado capturado. "
+            f"El sistema siguió funcionando.")
+
+
+def ejecutar_simulacion(gestor):
+    """Simula operaciones completas, válidas e inválidas, sin que el sistema se detenga."""
+    registro.info("===== INICIO DE LA SIMULACIÓN DE OPERACIONES =====")
+    resultados = []                         # Aquí se acumula el resultado de cada operación
+
+    def paso(descripcion, funcion, *argumentos):
+        """Ejecuta una operación de forma segura y guarda su resultado."""
+        resultado = gestor.ejecutar_operacion(descripcion, funcion, *argumentos)
+        resultados.append(resultado)
+        return resultado["objeto"]          # Objeto creado o None si hubo error
+
+    def codigo(objeto):
+        """Código del objeto creado o un código inexistente si la creación falló."""
+        return objeto.id if objeto is not None else "NO-EXISTE"
+
+    # Registros válidos e inválidos de clientes
+    paso("Registrar cliente válido: Ana María Gómez", gestor.registrar_cliente,
+         "1012345678", "Ana María Gómez", "ana.gomez@correo.com", "3001234567")
+    paso("Registrar cliente válido: Carlos Pérez", gestor.registrar_cliente,
+         "79876543", "Carlos Pérez", "carlos.perez@correo.com", "3109876543")
+    paso("Registrar cliente con correo inválido", gestor.registrar_cliente,
+         "52123456", "Laura Ríos", "laura.rios.correo.com", "3201112233")
+    paso("Registrar cliente sin nombre", gestor.registrar_cliente,
+         "41234567", "", "sin.nombre@correo.com", "3005556677")
+    paso("Registrar cliente con documento repetido", gestor.registrar_cliente,
+         "1012345678", "Ana Duplicada", "otra@correo.com", "3001234567")
+    # Creación correcta e incorrecta de servicios
+    sala = paso("Crear servicio: Sala de juntas", gestor.crear_servicio,
+                "Reserva de sala", "Sala de juntas", "50000", "12")
+    equipos = paso("Crear servicio: Portátiles", gestor.crear_servicio,
+                   "Alquiler de equipo", "Portátiles", "40000", "3")
+    asesoria = paso("Crear servicio: Asesoría en software", gestor.crear_servicio,
+                    "Asesoría especializada", "Asesoría en software", "80000",
+                    "software", "experto")
+    paso("Crear servicio con tarifa negativa", gestor.crear_servicio,
+         "Reserva de sala", "Auditorio", "-20000", "50")
+    paso("Crear asesoría con especialidad no ofrecida", gestor.crear_servicio,
+         "Asesoría especializada", "Asesoría en cocina", "60000", "cocina", "básico")
+    # Reservas exitosas y su ciclo de vida
+    reserva_sala = paso("Reservar la sala 3 horas con IVA del 19 %", gestor.crear_reserva,
+                        "1012345678", codigo(sala), "3", "19", "0")
+    paso("Confirmar la reserva de la sala", gestor.confirmar_reserva, codigo(reserva_sala))
+    paso("Procesar (facturar) la reserva de la sala", gestor.procesar_reserva,
+         codigo(reserva_sala))
+    reserva_asesoria = paso("Reservar asesoría 2 horas con IVA y 10 % de descuento",
+                            gestor.crear_reserva, "79876543", codigo(asesoria), "2", "19", "10")
+    paso("Cancelar la reserva de asesoría", gestor.cancelar_reserva, codigo(reserva_asesoria))
+    paso("Cancelar otra vez la misma reserva", gestor.cancelar_reserva, codigo(reserva_asesoria))
+    paso("Procesar una reserva cancelada", gestor.procesar_reserva, codigo(reserva_asesoria))
+    # Reservas fallidas, servicio no disponible y cálculo inconsistente
+    paso("Reservar la sala por 12 horas (máximo 8)", gestor.crear_reserva,
+         "1012345678", codigo(sala), "12", "19", "0")
+    paso("Reservar con un cliente no registrado", gestor.crear_reserva,
+         "99999999", codigo(sala), "2", "19", "0")
+    paso("Marcar los portátiles como no disponibles", gestor.cambiar_disponibilidad,
+         codigo(equipos))
+    paso("Reservar portátiles no disponibles", gestor.crear_reserva,
+         "79876543", codigo(equipos), "2", "19", "0")
+    paso("Reservar con un descuento del 150 %", gestor.crear_reserva,
+         "79876543", codigo(asesoria), "1", "19", "150")
+    # Error no previsto: el sistema lo captura, lo registra y sigue funcionando
+    paso("Operación no soportada: eliminar un cliente",
+         lambda: getattr(gestor, "eliminar_cliente")("1012345678"))
+
+    registro.info(f"===== FIN DE LA SIMULACIÓN. {resumir_simulacion(resultados)} =====")
+    return resultados
+
 
 
 # =============================================================================
