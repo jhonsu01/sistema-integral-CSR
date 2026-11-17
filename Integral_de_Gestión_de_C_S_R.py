@@ -896,7 +896,414 @@ def ejecutar_simulacion(gestor):
 
 # =============================================================================
 # SECCIÓN 5: INTERFAZ GRÁFICA (tkinter, ttk y messagebox) Y PUNTO DE ENTRADA
-# Aporte de: Kevin Geovani Santos Ortega (rama Kevin)
+# Aporte de: Lider del grupo de trabajo 
 # =============================================================================
 
-# >>> APORTE PENDIENTE DE KEVIN: reemplace esta línea por el contenido de seccion_5_interfaz.py
+class AplicacionFJ(tk.Tk):
+    """Ventana principal con una pestaña para cada parte del sistema."""
+
+    def __init__(self, gestor=None):
+        super().__init__()                  # Crea la ventana raíz de tkinter
+        self.gestor = gestor if gestor is not None else GestorSistema()   # Lógica de negocio
+        self.title("Software FJ - Gestión de clientes, servicios y reservas")
+        self.geometry("1000x680")           # Tamaño inicial (ancho x alto)
+        self.minsize(900, 600)              # Tamaño mínimo para que todo sea visible
+        self.pestanas = ttk.Notebook(self)  # Contenedor de pestañas
+        self.pestanas.pack(fill="both", expand=True, padx=10, pady=10)
+        # Una pestaña por cada parte del sistema
+        self._crear_pestana_clientes()
+        self._crear_pestana_servicios()
+        self._crear_pestana_reservas()
+        self._crear_pestana_simulacion()
+        self._crear_pestana_registro()
+        # Al entrar a la pestaña del registro se recarga el archivo de logs
+        self.pestanas.bind("<<NotebookTabChanged>>", self._al_cambiar_pestana)
+        self._actualizar_vistas()           # Llena tablas y listas con los datos actuales
+        registro.info("Interfaz gráfica abierta.")
+
+    # ------------------------------------------------------------------
+    # Utilidades para construir la interfaz y manejar los errores
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _campo(contenedor, texto, fila, columna, valor=""):
+        """Crea una etiqueta con su campo de texto y devuelve la variable asociada."""
+        ttk.Label(contenedor, text=texto).grid(row=fila, column=columna, sticky="w",
+                                               padx=5, pady=3)
+        variable = tk.StringVar(value=valor)    # Guarda lo que escribe el usuario
+        ttk.Entry(contenedor, textvariable=variable, width=32).grid(
+            row=fila, column=columna + 1, sticky="w", padx=5, pady=3)
+        return variable
+
+    @staticmethod
+    def _crear_tabla(contenedor, columnas):
+        """Crea una tabla con barra de desplazamiento; columnas = ((título, ancho), ...)."""
+        marco = ttk.Frame(contenedor)
+        marco.pack(fill="both", expand=True, pady=(10, 0))
+        identificadores = [f"c{indice}" for indice in range(len(columnas))]   # c0, c1, ...
+        tabla = ttk.Treeview(marco, columns=identificadores, show="headings",
+                             selectmode="browse")   # Solo se puede elegir una fila
+        for identificador, (titulo, ancho) in zip(identificadores, columnas):
+            tabla.heading(identificador, text=titulo, anchor="w")
+            tabla.column(identificador, width=ancho, anchor="w")
+        barra = ttk.Scrollbar(marco, orient="vertical", command=tabla.yview)
+        tabla.configure(yscrollcommand=barra.set)   # Une la tabla con su barra
+        tabla.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+        return tabla
+
+    @staticmethod
+    def _llenar_tabla(tabla, filas):
+        """Reemplaza las filas de una tabla y conserva la fila que estaba seleccionada."""
+        seleccion = tabla.selection()               # Recuerda la fila elegida
+        tabla.delete(*tabla.get_children())         # Borra las filas anteriores
+        for identificador, valores in filas:
+            tabla.insert("", "end", iid=identificador, values=valores)
+        if seleccion and tabla.exists(seleccion[0]):
+            tabla.selection_set(seleccion[0])       # Vuelve a seleccionarla
+
+    @staticmethod
+    def _codigo(texto):
+        """Extrae el código de una opción como 'SER-001 - Sala de juntas'."""
+        return texto.split(" - ")[0].strip()
+
+    @staticmethod
+    def _seleccionada(tabla, nombre):
+        """Devuelve el código de la fila seleccionada o lanza un error si no hay ninguna."""
+        seleccion = tabla.selection()
+        if not seleccion:
+            error = ParametroFaltanteError(f"Seleccione primero {nombre} en la tabla.")
+            registrar_error(error, "Interfaz")          # También queda en el log
+            raise error
+        return seleccion[0]
+
+    def _ejecutar(self, accion, titulo, mensaje):
+        """Ejecuta una acción, informa el resultado y evita que un error cierre la ventana."""
+        try:
+            resultado = accion()
+        except ErrorSistemaFJ as error:
+            # Error previsto: ya está en el log; se muestra con el título de su tipo
+            messagebox.showerror(error.titulo, str(error), parent=self)
+            return None
+        except Exception as error:
+            # Error no previsto: se registra con el detalle técnico y la ventana sigue abierta
+            registro.critical(f"Error inesperado en la interfaz: {type(error).__name__}: "
+                              f"{error}", exc_info=True)
+            messagebox.showerror("Error inesperado", "Ocurrió un error no previsto. La "
+                                 "aplicación sigue funcionando y el detalle quedó en el "
+                                 "registro de eventos.", parent=self)
+            return None
+        else:
+            self._actualizar_vistas()       # Primero se refrescan las tablas
+            messagebox.showinfo(titulo, mensaje(resultado), parent=self)
+            return resultado
+
+    def report_callback_exception(self, tipo, valor, rastro):
+        """Sobrescribe el método de tkinter: un error en un evento no cierra la aplicación."""
+        registro.critical(f"Error no controlado en la interfaz: {tipo.__name__}: {valor}",
+                          exc_info=(tipo, valor, rastro))
+        messagebox.showerror("Error inesperado", "Ocurrió un error no previsto. La "
+                             "aplicación sigue funcionando.", parent=self)
+
+    # ------------------------------------------------------------------
+    # Pestaña Clientes
+    # ------------------------------------------------------------------
+    def _crear_pestana_clientes(self):
+        pestana = ttk.Frame(self.pestanas, padding=10)
+        self.pestanas.add(pestana, text="Clientes")
+        # Formulario de registro en dos columnas
+        formulario = ttk.LabelFrame(pestana, text="Registrar cliente", padding=10)
+        formulario.pack(fill="x")
+        self.var_documento = self._campo(formulario, "Documento:", 0, 0)
+        self.var_nombre = self._campo(formulario, "Nombre completo:", 1, 0)
+        self.var_correo = self._campo(formulario, "Correo electrónico:", 0, 2)
+        self.var_telefono = self._campo(formulario, "Teléfono:", 1, 2)
+        self.boton_registrar = ttk.Button(formulario, text="Registrar cliente",
+                                          command=self.registrar_cliente)
+        self.boton_registrar.grid(row=2, column=1, sticky="w", padx=5, pady=(8, 0))
+        # Tabla con los clientes registrados (el documento se muestra protegido)
+        self.tabla_clientes = self._crear_tabla(pestana, (
+            ("Código", 90), ("Documento", 120), ("Nombre", 250), ("Correo", 280),
+            ("Teléfono", 130)))
+
+    def registrar_cliente(self):
+        # Envía los datos del formulario al gestor; los errores se muestran en un diálogo
+        cliente = self._ejecutar(
+            lambda: self.gestor.registrar_cliente(self.var_documento.get(), self.var_nombre.get(),
+                                                  self.var_correo.get(), self.var_telefono.get()),
+            "Cliente registrado", lambda c: f"Se registró el cliente {c.id}: {c.nombre}.")
+        if cliente is not None:             # Solo se limpia el formulario si todo salió bien
+            for variable in (self.var_documento, self.var_nombre,
+                             self.var_correo, self.var_telefono):
+                variable.set("")
+
+    # ------------------------------------------------------------------
+    # Pestaña Servicios
+    # ------------------------------------------------------------------
+    def _crear_pestana_servicios(self):
+        pestana = ttk.Frame(self.pestanas, padding=10)
+        self.pestanas.add(pestana, text="Servicios")
+        formulario = ttk.LabelFrame(pestana, text="Crear servicio", padding=10)
+        formulario.pack(fill="x")
+        # Lista desplegable con los tres tipos de servicio del catálogo
+        ttk.Label(formulario, text="Tipo de servicio:").grid(row=0, column=0, sticky="w",
+                                                             padx=5, pady=3)
+        self.var_tipo = tk.StringVar(value=next(iter(TIPOS_SERVICIO)))
+        self.combo_tipo = ttk.Combobox(formulario, textvariable=self.var_tipo, state="readonly",
+                                       values=list(TIPOS_SERVICIO), width=29)
+        self.combo_tipo.grid(row=0, column=1, sticky="w", padx=5, pady=3)
+        self.combo_tipo.bind("<<ComboboxSelected>>", self._actualizar_formulario_servicio)
+        self.var_nombre_servicio = self._campo(formulario, "Nombre:", 1, 0)
+        self.var_tarifa = self._campo(formulario, "Tarifa ($):", 2, 0)
+        # Datos propios de cada tipo: sus etiquetas cambian según el servicio elegido
+        self.etiqueta_dato1 = ttk.Label(formulario, width=22)
+        self.etiqueta_dato1.grid(row=0, column=2, sticky="w", padx=5, pady=3)
+        self.var_dato1 = tk.StringVar()
+        ttk.Entry(formulario, textvariable=self.var_dato1, width=32).grid(
+            row=0, column=3, sticky="w", padx=5, pady=3)
+        self.etiqueta_dato2 = ttk.Label(formulario, width=22)
+        self.etiqueta_dato2.grid(row=1, column=2, sticky="w", padx=5, pady=3)
+        self.var_dato2 = tk.StringVar()
+        self.entrada_dato2 = ttk.Entry(formulario, textvariable=self.var_dato2, width=32)
+        self.entrada_dato2.grid(row=1, column=3, sticky="w", padx=5, pady=3)
+        # Texto de ayuda con las reglas del tipo elegido
+        self.var_ayuda_servicio = tk.StringVar()
+        ttk.Label(formulario, textvariable=self.var_ayuda_servicio, wraplength=420).grid(
+            row=2, column=2, columnspan=2, sticky="w", padx=5, pady=3)
+        # Botones de acción
+        botones = ttk.Frame(formulario)
+        botones.grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.boton_crear_servicio = ttk.Button(botones, text="Crear servicio",
+                                               command=self.crear_servicio)
+        self.boton_crear_servicio.pack(side="left", padx=5)
+        self.boton_disponibilidad = ttk.Button(botones,
+                                               text="Cambiar disponibilidad del seleccionado",
+                                               command=self.cambiar_disponibilidad)
+        self.boton_disponibilidad.pack(side="left", padx=5)
+        # Tabla con el catálogo de servicios
+        self.tabla_servicios = self._crear_tabla(pestana, (
+            ("Código", 80), ("Tipo", 170), ("Descripción", 560), ("Disponible", 90)))
+        self._actualizar_formulario_servicio()
+
+    def _actualizar_formulario_servicio(self, _evento=None):
+        """Cambia las etiquetas según el tipo elegido; las reglas salen de la propia clase."""
+        clase = TIPOS_SERVICIO[self.var_tipo.get()]
+        etiqueta1, etiqueta2 = clase.ETIQUETAS
+        self.etiqueta_dato1.config(text=f"{etiqueta1}:")
+        if etiqueta2 is None:               # Sala y equipos solo usan un dato propio
+            self.etiqueta_dato2.config(text="(No aplica)")
+            self.var_dato2.set("")
+            self.entrada_dato2.state(["disabled"])
+        else:                               # La asesoría usa especialidad y nivel
+            self.etiqueta_dato2.config(text=f"{etiqueta2}:")
+            self.entrada_dato2.state(["!disabled"])
+        self.var_ayuda_servicio.set(clase.ayuda())      # Polimorfismo: ayuda de cada clase
+
+    def crear_servicio(self):
+        # Envía los datos del formulario al gestor, que elige la clase según el tipo
+        servicio = self._ejecutar(
+            lambda: self.gestor.crear_servicio(self.var_tipo.get(), self.var_nombre_servicio.get(),
+                                               self.var_tarifa.get(), self.var_dato1.get(),
+                                               self.var_dato2.get()),
+            "Servicio creado", lambda s: f"Se creó el servicio {s.id}:\n{s.describir()}")
+        if servicio is not None:            # Limpia el formulario después de crear
+            for variable in (self.var_nombre_servicio, self.var_tarifa,
+                             self.var_dato1, self.var_dato2):
+                variable.set("")
+
+    def cambiar_disponibilidad(self):
+        # Activa o desactiva el servicio elegido en la tabla
+        self._ejecutar(
+            lambda: self.gestor.cambiar_disponibilidad(
+                self._seleccionada(self.tabla_servicios, "un servicio")),
+            "Disponibilidad actualizada",
+            lambda s: f"El servicio {s.id} ahora está "
+                      f"{'disponible' if s.disponible else 'no disponible'}.")
+
+    # ------------------------------------------------------------------
+    # Pestaña Reservas
+    # ------------------------------------------------------------------
+    def _crear_pestana_reservas(self):
+        pestana = ttk.Frame(self.pestanas, padding=10)
+        self.pestanas.add(pestana, text="Reservas")
+        formulario = ttk.LabelFrame(pestana, text="Crear reserva", padding=10)
+        formulario.pack(fill="x")
+        # Listas desplegables con los clientes y los servicios registrados
+        ttk.Label(formulario, text="Cliente:").grid(row=0, column=0, sticky="w", padx=5, pady=3)
+        self.var_cliente_reserva = tk.StringVar()
+        self.combo_cliente = ttk.Combobox(formulario, textvariable=self.var_cliente_reserva,
+                                          width=29)
+        self.combo_cliente.grid(row=0, column=1, sticky="w", padx=5, pady=3)
+        ttk.Label(formulario, text="Servicio:").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+        self.var_servicio_reserva = tk.StringVar()
+        self.combo_servicio = ttk.Combobox(formulario, textvariable=self.var_servicio_reserva,
+                                           width=29)
+        self.combo_servicio.grid(row=1, column=1, sticky="w", padx=5, pady=3)
+        self.combo_servicio.bind("<<ComboboxSelected>>", self._mostrar_ayuda_reserva)
+        self.var_ayuda_reserva = tk.StringVar(value="Seleccione un servicio para ver sus reglas.")
+        ttk.Label(formulario, textvariable=self.var_ayuda_reserva, wraplength=380).grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=5, pady=3)
+        # Duración, impuesto y descuento (por defecto IVA del 19 % y sin descuento)
+        self.var_duracion = self._campo(formulario, "Duración (horas o días):", 0, 2)
+        self.var_impuesto = self._campo(formulario, "Impuesto IVA (%):", 1, 2, "19")
+        self.var_descuento = self._campo(formulario, "Descuento (%):", 2, 2, "0")
+        # Botón para crear y botones que actúan sobre la reserva seleccionada
+        botones = ttk.Frame(formulario)
+        botones.grid(row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.boton_crear_reserva = ttk.Button(botones, text="Crear reserva",
+                                              command=self.crear_reserva)
+        self.boton_crear_reserva.pack(side="left", padx=5)
+        ttk.Label(botones, text="Reserva seleccionada:").pack(side="left", padx=(25, 5))
+        self.boton_confirmar = ttk.Button(botones, text="Confirmar",
+                                          command=lambda: self.cambiar_estado_reserva("confirmar"))
+        self.boton_confirmar.pack(side="left", padx=5)
+        self.boton_cancelar = ttk.Button(botones, text="Cancelar",
+                                         command=lambda: self.cambiar_estado_reserva("cancelar"))
+        self.boton_cancelar.pack(side="left", padx=5)
+        self.boton_procesar = ttk.Button(botones, text="Procesar",
+                                         command=lambda: self.cambiar_estado_reserva("procesar"))
+        self.boton_procesar.pack(side="left", padx=5)
+        # Tabla con las reservas y su estado
+        self.tabla_reservas = self._crear_tabla(pestana, (
+            ("Código", 80), ("Cliente", 200), ("Servicio", 220), ("Duración", 110),
+            ("Costo total", 150), ("Estado", 110)))
+
+    def _mostrar_ayuda_reserva(self, _evento=None):
+        """Muestra las reglas del servicio elegido (vienen de su clase, no se repiten aquí)."""
+        servicio = self.gestor.buscar_servicio(self._codigo(self.var_servicio_reserva.get()))
+        if servicio is not None:
+            self.var_ayuda_reserva.set(servicio.ayuda())
+
+    def crear_reserva(self):
+        # Envía la reserva al gestor; el costo lo calcula el método sobrecargado del servicio
+        reserva = self._ejecutar(
+            lambda: self.gestor.crear_reserva(self._codigo(self.var_cliente_reserva.get()),
+                                              self._codigo(self.var_servicio_reserva.get()),
+                                              self.var_duracion.get(), self.var_impuesto.get(),
+                                              self.var_descuento.get()),
+            "Reserva creada",
+            lambda r: (f"Reserva {r.id} creada en estado {r.estado}.\n"
+                       f"Costo total: {formato_moneda(r.costo)}"))
+        if reserva is not None:             # Deja el formulario listo para otra reserva
+            self.var_duracion.set("")
+            self.var_descuento.set("0")
+
+    def cambiar_estado_reserva(self, accion):
+        """Confirma, cancela o procesa la reserva seleccionada en la tabla."""
+        metodos = {"confirmar": self.gestor.confirmar_reserva,     # Acción -> método del gestor
+                   "cancelar": self.gestor.cancelar_reserva,
+                   "procesar": self.gestor.procesar_reserva}
+        self._ejecutar(
+            lambda: metodos[accion](self._seleccionada(self.tabla_reservas, "una reserva")),
+            "Reserva actualizada", lambda r: f"La reserva {r.id} quedó en estado {r.estado}.")
+
+    # ------------------------------------------------------------------
+    # Pestaña Simulación
+    # ------------------------------------------------------------------
+    def _crear_pestana_simulacion(self):
+        pestana = ttk.Frame(self.pestanas, padding=10)
+        self.pestanas.add(pestana, text="Simulación")
+        ttk.Label(pestana, wraplength=940, text=(
+            "Ejecuta una secuencia de operaciones completas sobre los datos de la aplicación: "
+            "registros válidos e inválidos de clientes, creación correcta e incorrecta de "
+            "servicios y reservas exitosas y fallidas. Cada error se controla, queda en el "
+            "archivo de logs y la aplicación sigue funcionando.")).pack(anchor="w")
+        self.boton_simular = ttk.Button(pestana, text="Ejecutar simulación", command=self.simular)
+        self.boton_simular.pack(anchor="w", pady=8)
+        self.var_resumen = tk.StringVar(value="La simulación aún no se ha ejecutado.")
+        ttk.Label(pestana, textvariable=self.var_resumen).pack(anchor="w")
+        # Tabla con el resultado de cada operación simulada
+        self.tabla_simulacion = self._crear_tabla(pestana, (
+            ("N.º", 45), ("Operación", 320), ("Resultado", 120), ("Detalle", 470)))
+
+    def simular(self):
+        """Ejecuta la simulación una sola vez por sesión, sobre el gestor de la interfaz."""
+        self.boton_simular.state(["disabled"])          # Evita repetir los mismos registros
+        self._ejecutar(self._correr_simulacion, "Simulación terminada", lambda resumen: resumen)
+
+    def _correr_simulacion(self):
+        resultados = ejecutar_simulacion(self.gestor)   # Lógica de la sección 4
+        self._llenar_tabla(self.tabla_simulacion, [
+            (str(r["numero"]), (r["numero"], r["operacion"], r["estado"], r["detalle"]))
+            for r in resultados])
+        resumen = resumir_simulacion(resultados)
+        self.var_resumen.set(resumen)                   # Muestra el resumen sobre la tabla
+        return resumen
+
+    # ------------------------------------------------------------------
+    # Pestaña Registro de eventos
+    # ------------------------------------------------------------------
+    def _crear_pestana_registro(self):
+        self.pestana_registro = ttk.Frame(self.pestanas, padding=10)
+        self.pestanas.add(self.pestana_registro, text="Registro de eventos")
+        barra = ttk.Frame(self.pestana_registro)
+        barra.pack(fill="x")
+        # El botón se ubica primero para que la ruta larga del archivo no lo oculte
+        ttk.Button(barra, text="Actualizar", command=self.mostrar_registro).pack(side="right")
+        ttk.Label(barra, text=f"Archivo: {RUTA_LOG}", wraplength=840).pack(side="left")
+        # Cuadro de texto de solo lectura con barras de desplazamiento
+        marco = ttk.Frame(self.pestana_registro)
+        marco.pack(fill="both", expand=True, pady=(8, 0))
+        self.texto_registro = tk.Text(marco, wrap="none", font=("Consolas", 9))
+        vertical = ttk.Scrollbar(marco, orient="vertical", command=self.texto_registro.yview)
+        horizontal = ttk.Scrollbar(marco, orient="horizontal",
+                                   command=self.texto_registro.xview)
+        self.texto_registro.configure(yscrollcommand=vertical.set,
+                                      xscrollcommand=horizontal.set, state="disabled")
+        vertical.pack(side="right", fill="y")
+        horizontal.pack(side="bottom", fill="x")
+        self.texto_registro.pack(side="left", fill="both", expand=True)
+
+    def mostrar_registro(self):
+        """Carga el archivo de logs en el cuadro de texto (solo lectura)."""
+        self.texto_registro.configure(state="normal")      # Se habilita para escribir
+        self.texto_registro.delete("1.0", "end")
+        self.texto_registro.insert("end", leer_registro())
+        self.texto_registro.configure(state="disabled")    # Y se vuelve a bloquear
+        self.texto_registro.see("end")      # Muestra los eventos más recientes
+
+    def _al_cambiar_pestana(self, _evento=None):
+        # Si el usuario abre la pestaña del registro, se recarga el archivo
+        if self.pestanas.select() == str(self.pestana_registro):
+            self.mostrar_registro()
+
+    # ------------------------------------------------------------------
+    # Actualización de tablas y listas
+    # ------------------------------------------------------------------
+    def _actualizar_vistas(self):
+        """Refresca las tablas y las listas desplegables con los datos del gestor."""
+        self._llenar_tabla(self.tabla_clientes, [
+            (c.id, (c.id, c.documento_protegido(), c.nombre, c.correo, c.telefono))
+            for c in self.gestor.clientes])
+        self._llenar_tabla(self.tabla_servicios, [
+            (s.id, (s.id, s.TIPO, s.describir(), "Sí" if s.disponible else "No"))
+            for s in self.gestor.servicios])
+        self._llenar_tabla(self.tabla_reservas, [
+            (r.id, (r.id, r.cliente.nombre, r.servicio.nombre,
+                    f"{r.duracion:g} {r.servicio.UNIDAD}", formato_moneda(r.costo), r.estado))
+            for r in self.gestor.reservas])
+        # Opciones de las listas desplegables de la pestaña Reservas
+        self.combo_cliente["values"] = [f"{c.id} - {c.nombre}" for c in self.gestor.clientes]
+        self.combo_servicio["values"] = [
+            f"{s.id} - {s.nombre}" + ("" if s.disponible else " (no disponible)")
+            for s in self.gestor.servicios]
+
+
+def main():
+    """Punto de entrada: abre la interfaz gráfica y registra el inicio y el fin de la sesión."""
+    registro.info("===== Inicio de sesión de Software FJ =====")
+    try:
+        aplicacion = AplicacionFJ()
+    except tk.TclError as error:
+        # Sucede, por ejemplo, cuando el equipo no tiene entorno gráfico
+        registrar_error(error, "Abrir la interfaz gráfica")
+        print(f"No fue posible abrir la interfaz gráfica: {error}")
+    else:
+        aplicacion.mainloop()               # La ventana queda atendiendo los eventos
+    finally:
+        registro.info("===== Fin de sesión de Software FJ =====")
+
+
+# Solo se abre la ventana cuando el archivo se ejecuta directamente (no al importarlo)
+if __name__ == "__main__":
+    main()
+
